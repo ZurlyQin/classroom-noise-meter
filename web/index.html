@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#151d2c">
+  <title>Classroom Noise Meter</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="Classroom Noise Meter home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <span>Classroom<br><strong>Noise Meter</strong></span>
+      </a>
+      <div class="connection">
+        <span class="connection-state" id="connection-state">Disconnected</span>
+        <button id="debug-toggle" class="button quiet debug-toggle" type="button" aria-pressed="false" aria-controls="debug-panel">Debug mode</button>
+        <button id="demo" class="button quiet" type="button">Try demo</button>
+        <button id="connect" class="button connect" type="button">Connect Arduino</button>
+      </div>
+    </header>
+
+    <main>
+      <div id="message" class="message" role="status" hidden></div>
+      <section class="instrument" aria-label="Live classroom readings">
+        <div class="meter">
+          <div class="meter-heading">
+            <h1>Room level</h1>
+            <span id="live-status" class="live-status">Waiting for input</span>
+          </div>
+          <div class="reading"><span id="level">–</span><span class="unit">/ 100</span></div>
+          <div class="led-bar" id="led-bar" role="img" aria-label="0 of 5 LEDs lit">
+            <i></i><i></i><i></i><i></i><i></i>
+          </div>
+          <div class="bar-labels"><span>Quiet</span><span>Loud</span></div>
+          <div class="meter-footer">
+            <span id="adc">A0 span <strong>–</strong></span>
+            <span id="warning-status">Warning after 5 s above limit</span>
+          </div>
+        </div>
+
+        <section class="settings" aria-labelledby="mode-title">
+          <h2 id="mode-title">Classroom mode</h2>
+          <div class="modes" role="group" aria-label="Classroom mode">
+            <button type="button" data-mode="EXAM" aria-pressed="false"><span>Exam</span><strong id="limit-exam">30</strong></button>
+            <button type="button" data-mode="GROUP" aria-pressed="true"><span>Group work</span><strong id="limit-group">50</strong></button>
+            <button type="button" data-mode="BREAK" aria-pressed="false"><span>Break</span><strong id="limit-break">70</strong></button>
+          </div>
+          <label class="switch-line" title="Optional three-position selector. Common to GND, outside contacts to D9 and D10.">
+            <input id="hardware" type="checkbox" disabled>
+            <span>Use physical switch</span>
+          </label>
+          <div class="sensitivity">
+            <label for="sensitivity">Mic sensitivity <output id="sensitivity-value" for="sensitivity">74%</output></label>
+            <input id="sensitivity" type="range" min="15" max="150" value="115" aria-describedby="sense-hint">
+            <div class="range-labels" id="sense-hint"><span>Lower gain</span><span>Higher gain</span></div>
+          </div>
+          <div class="alarm-settings">
+            <label for="alarm-sound">Alarm sound</label>
+            <div class="alarm-controls">
+              <select id="alarm-sound" aria-describedby="alarm-route">
+                <optgroup label="Arduino buzzer">
+                  <option value="double">Two short beeps</option>
+                  <option value="triple">Three quick beeps</option>
+                  <option value="long">One long beep</option>
+                </optgroup>
+                <optgroup label="Computer speakers">
+                  <option value="chime">Soft chime</option>
+                  <option value="ascending">Rising notes</option>
+                  <option value="custom">Custom audio file</option>
+                </optgroup>
+              </select>
+              <button id="test-buzzer" class="button outline" type="button" disabled>Test buzzer</button>
+            </div>
+            <p class="alarm-route" id="alarm-route">Plays on the Arduino D8 buzzer.</p>
+            <div class="alarm-file" id="alarm-file-area" hidden>
+              <label for="alarm-file">Audio file</label>
+              <input id="alarm-file" type="file" accept="audio/*,.mp3,.wav,.ogg,.m4a">
+              <p class="alarm-route">Plays the first 3 seconds. The file stays in this tab.</p>
+            </div>
+            <p id="buzzer-status" class="buzzer-status" role="status" hidden></p>
+          </div>
+        </section>
+      </section>
+
+      <section class="panel debug-panel" id="debug-panel" aria-labelledby="debug-title" hidden>
+        <div class="debug-heading">
+          <div><h2 id="debug-title">Debug mode</h2><p id="debug-source">Connect the Arduino to read its pins.</p></div>
+          <span id="debug-scan" class="debug-scan">1-second scans</span>
+        </div>
+        <div class="debug-grid">
+          <div class="debug-card">
+            <h3>LED outputs</h3>
+            <ul class="debug-pins" id="debug-leds">
+              <li data-pin="2" data-color="green"><span>D2</span><strong>—</strong></li>
+              <li data-pin="3" data-color="green"><span>D3</span><strong>—</strong></li>
+              <li data-pin="4" data-color="yellow"><span>D4</span><strong>—</strong></li>
+              <li data-pin="5" data-color="yellow"><span>D5</span><strong>—</strong></li>
+              <li data-pin="6" data-color="red"><span>D6</span><strong>—</strong></li>
+            </ul>
+          </div>
+          <div class="debug-card">
+            <h3>A0 microphone</h3>
+            <dl class="debug-values">
+              <div><dt>Range</dt><dd id="debug-mic-range">—</dd></div>
+              <div><dt>Peak to peak</dt><dd id="debug-mic-span">—</dd></div>
+              <div><dt>Samples</dt><dd id="debug-mic-count">—</dd></div>
+            </dl>
+            <p class="debug-note" id="debug-mic-note">Raw ADC readings from the last second.</p>
+          </div>
+          <div class="debug-card">
+            <h3>D8 buzzer</h3>
+            <strong class="debug-buzzer" id="debug-buzzer">—</strong>
+            <p class="debug-note" id="debug-buzzer-note">Waiting for pin readback.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="record-card panel" aria-labelledby="record-title">
+        <div class="record-heading">
+          <div><h2 id="record-title">Record a session</h2><p id="session-note">60 seconds · one stored reading per second</p></div>
+          <div class="session-actions">
+            <span id="session-clock" class="clock">00:00 <small>/ 01:00</small></span>
+            <button id="session-action" class="button start" type="button" disabled>Start session</button>
+          </div>
+        </div>
+        <progress id="session-progress" max="60" value="0" aria-label="Recording progress"></progress>
+      </section>
+
+      <section class="reports panel" aria-labelledby="report-title">
+        <div class="report-heading">
+          <div><h2 id="report-title">Session reports</h2><p>Compare completed recordings</p></div>
+          <button id="print" class="button outline" type="button" disabled>Print report</button>
+        </div>
+        <div id="report-empty" class="empty">Your first 60-second recording will appear here.</div>
+        <div id="report-content" hidden>
+          <div class="report-controls">
+            <label for="report-primary">Report <select id="report-primary"></select></label>
+            <label for="report-compare">Compare with <select id="report-compare"></select></label>
+          </div>
+          <div class="report-grid">
+            <div class="chart-panel">
+              <canvas id="chart" aria-label="Line chart of one reading per second"></canvas>
+              <p id="chart-key" class="chart-key"></p>
+            </div>
+            <div class="report-details">
+              <dl id="report-stats" class="stats"></dl>
+              <h3>Loudest moments</h3>
+              <ol id="loudest" class="loudest"></ol>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table><caption>Recorded sessions</caption><thead><tr><th>Session</th><th>Mode</th><th>Average</th><th>Peak</th><th>Warnings</th></tr></thead>
+            <tbody id="history"></tbody></table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer><span>Arduino Uno · StandardFirmata</span><span>A0 mic · D2–D6 LEDs · D8 buzzer</span></footer>
+  </div>
+</body>
+</html>
