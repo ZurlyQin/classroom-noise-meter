@@ -41,9 +41,10 @@ Use one current-limiting resistor per LED, for example 220–330 Ω, and connect
 
 ## Use the dashboard
 
-- **Classroom mode** sets the warning threshold to 30 for Exam, 50 for Group work, or 70 for Break. The displayed level is a unitless 0–100 scale. Adjust **Mic sensitivity** for the room and use the same setting for comparable sessions.
+- **Classroom mode** defaults to a warning threshold of 30 for Exam, 50 for Group work, or 70 for Break. The displayed level is a unitless 0–100 scale. Adjust **Mic sensitivity** for the room and use the same setting for comparable sessions.
 - **Alarm sound** lets you select a D8 buzzer pattern, a built-in computer tone, or a custom file. The alarm fires once after five consecutive seconds strictly above the threshold and rearms at or below it. Use **Test buzzer** to check D8, or **Test sound** to preview and enable speaker audio. Custom audio plays its first three seconds through the computer’s speakers. Re-select the file after refreshing the page.
 - **Debug mode** shows the `HIGH` or `LOW` readback for D2–D6 and D8, plus the time of the last confirmed D8 `HIGH`. Every second it shows the A0 minimum, maximum, peak-to-peak span, and sample count in raw ADC units. It marks windows that include an alarm or buzzer test.
+- In **Debug mode → Alarm threshold**, drag the slider (0–100) and release to set the limit for the selected classroom mode. Changing the limit restarts the five-second timer. Each mode keeps its setting after you close the panel, until the server restarts. The slider is locked during recording.
 - **Start session** begins a 60-second recording. Keep the page in the foreground. The mode and sensitivity are locked for that session, and the highest smoothed level in each second is stored as one reading. Cancelling or losing the input discards an incomplete session.
 - **Session reports** shows the average, peak, warning count, and three loudest seconds. Use **Compare with** to overlay two reports. Use **Print report** to print or save a PDF. The 12 most recent sessions stay in memory until the Java process stops.
 

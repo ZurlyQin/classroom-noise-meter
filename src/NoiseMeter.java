@@ -1,5 +1,6 @@
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.EnumMap;
 
 /** Hardware-independent Java model. Time is monotonic milliseconds supplied by the server. */
 final class NoiseMeter {
@@ -40,6 +41,7 @@ final class NoiseMeter {
     private int level;
     private int adcSpan;
     private int fullScale = 50;
+    private final EnumMap<Mode, Integer> customLimits = new EnumMap<>(Mode.class);
     private Mode mode = Mode.GROUP;
     private String owner;
     private String source = "none";
@@ -57,7 +59,7 @@ final class NoiseMeter {
     private Instant recordingStarted;
 
     record Summary(int id, Instant started, Mode mode, String source, int scale, int warnings,
-                   double average, int peak, int[] loudest) { }
+                   double average, int peak, int[] loudest, int limit) { }
 
     synchronized String apply(String action, String client, String argument, int low,
                               int high, int position, long now) {
@@ -76,6 +78,19 @@ final class NoiseMeter {
                 requireIdle();
                 if (selector >= 0) throw new IllegalStateException("The hardware switch is selecting the mode.");
                 setMode(Mode.valueOf(argument));
+            }
+            case "threshold" -> {
+                requireAvailable(client);
+                requireIdle();
+                String[] parts = argument.split(":", 2);
+                if (parts.length != 2) throw new IllegalArgumentException("Expected a mode and threshold.");
+                if (Mode.valueOf(parts[0]) != mode) throw new IllegalStateException("The classroom mode changed. Adjust its threshold again.");
+                int limit = Integer.parseInt(parts[1]);
+                if (limit < 0 || limit > 100) throw new IllegalArgumentException("Choose a threshold from 0 to 100.");
+                if (limit != limitFor(mode)) {
+                    customLimits.put(mode, limit);
+                    resetWarning();
+                }
             }
             case "scale" -> {
                 requireAvailable(client);
@@ -172,6 +187,10 @@ final class NoiseMeter {
         recordingSince = -1;
     }
 
+    private int limitFor(Mode option) {
+        return customLimits.getOrDefault(option, option.limit);
+    }
+
     private void setMode(Mode next) {
         if (next != mode) {
             mode = next;
@@ -242,7 +261,7 @@ final class NoiseMeter {
     }
 
     private void updateWarning(long now, int alarmGuard) {
-        if (level <= mode.limit) {
+        if (level <= limitFor(mode)) {
             resetWarning();
             return;
         }
@@ -278,7 +297,7 @@ final class NoiseMeter {
         }
         System.arraycopy(recording, 0, sessionReadings[0], 0, SESSION_SECONDS);
         Summary summary = new Summary(nextSessionId++, recordingStarted, mode, source, recordingScale,
-                sessionWarnings, sum / (double) SESSION_SECONDS, recording[top[0]], top);
+                sessionWarnings, sum / (double) SESSION_SECONDS, recording[top[0]], top, limitFor(mode));
         sessionSummaries[0] = summary;
         historyCount = Math.min(historyCount + 1, HISTORY_SIZE);
         recordingSince = -1;
@@ -310,7 +329,7 @@ final class NoiseMeter {
         StringBuilder json = new StringBuilder(1024);
         json.append("{\"source\":\"").append(source).append("\",\"owner\":").append(client.equals(owner))
                 .append(",\"ready\":").append(ready(now)).append(",\"mode\":\"").append(mode)
-                .append("\",\"limit\":").append(mode.limit).append(",\"scale\":").append(fullScale)
+                .append("\",\"limit\":").append(limitFor(mode)).append(",\"scale\":").append(fullScale)
                 .append(",\"selector\":").append(selector).append(",\"level\":").append(level)
                 .append(",\"adcSpan\":").append(adcSpan).append(",\"leds\":").append(ledCount())
                 .append(",\"loudMs\":").append(loudFor).append(",\"alert\":").append(alertSequence)
@@ -319,7 +338,7 @@ final class NoiseMeter {
                 .append(",\"notice\":\"").append(notice).append("\",\"limits\":{");
         for (Mode option : Mode.values()) {
             if (option != Mode.EXAM) json.append(',');
-            json.append('"').append(option).append("\":").append(option.limit);
+            json.append('"').append(option).append("\":").append(limitFor(option));
         }
         json.append("},\"history\":[");
         for (int row = 0; row < historyCount; row++) {
@@ -328,7 +347,7 @@ final class NoiseMeter {
             json.append("{\"id\":").append(report.id()).append(",\"started\":\"").append(report.started())
                     .append("\",\"mode\":\"").append(report.mode()).append("\",\"source\":\"").append(report.source())
                     .append("\",\"scale\":").append(report.scale())
-                    .append(",\"warnings\":").append(report.warnings()).append(",\"average\":").append(report.average())
+                    .append(",\"warnings\":").append(report.warnings()).append(",\"limit\":").append(report.limit()).append(",\"average\":").append(report.average())
                     .append(",\"peak\":").append(report.peak()).append(",\"top\":").append(Arrays.toString(report.loudest()))
                     .append(",\"readings\":").append(Arrays.toString(sessionReadings[row])).append('}');
         }

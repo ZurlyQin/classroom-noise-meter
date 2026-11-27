@@ -35,6 +35,9 @@ let importingSound = false;
 let alarmJob = null;
 let debugEnabled = false;
 let debugCapture = null;
+let thresholdEditMode = null;
+let savingThreshold = false;
+let queuedThreshold = null;
 
 function pinQueries(pins) {
   return pins.flatMap(pin => [0xf0, 0x6d, pin, 0xf7]);
@@ -714,6 +717,13 @@ function render() {
     button.disabled = busy || state.active || unavailable || elements.hardware.checked;
     button.querySelector('strong').textContent = state.limits[button.dataset.mode];
   });
+  const threshold = elements['alarm-threshold'];
+  threshold.disabled = busy || state.active || unavailable;
+  if (!savingThreshold && (threshold.disabled || thresholdEditMode !== state.mode)) {
+    thresholdEditMode = null;
+    threshold.value = String(state.limit);
+    elements['threshold-value'].value = threshold.value;
+  }
   elements.hardware.disabled = busy || state.active || input?.kind !== 'board';
   if (elements.hardware.checked && state.selector === 3) {
     announceStatus('Both switch contacts are grounded. Check the D9 and D10 wiring.');
@@ -790,7 +800,7 @@ function renderReport() {
   const compare = elements['report-compare'];
   if (Number(compare.value) === report.id) compare.value = '';
   for (const item of compare.options) item.disabled = Number(item.value) === report.id;
-  const metrics = [['Average', report.average.toFixed(1)], ['Peak', report.peak], ['Warnings', report.warnings]];
+  const metrics = [['Average', report.average.toFixed(1)], ['Peak', report.peak], ['Warnings', report.warnings], ['Alarm threshold', report.limit]];
   elements['report-stats'].replaceChildren(...metrics.map(([label, value]) => {
     const item = document.createElement('div');
     const term = document.createElement('dt');
@@ -843,8 +853,8 @@ function drawChart() {
     ctx.setLineDash([4, 4]);
     ctx.strokeStyle = '#a75444';
     ctx.beginPath();
-    ctx.moveTo(start, y(state.limits[report.mode]));
-    ctx.lineTo(end, y(state.limits[report.mode]));
+    ctx.moveTo(start, y(report.limit));
+    ctx.lineTo(end, y(report.limit));
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -863,6 +873,29 @@ elements.demo.addEventListener('click', () => startInput('demo'));
 elements['debug-toggle'].addEventListener('click', toggleDebug);
 elements['session-action'].addEventListener('click', () => command(state.active ? 'cancel' : 'start'));
 modeButtons.forEach(button => button.addEventListener('click', () => command('mode', { value: button.dataset.mode })));
+const thresholdSlider = elements['alarm-threshold'];
+thresholdSlider.addEventListener('input', () => {
+  thresholdEditMode = state.mode;
+  elements['threshold-value'].value = thresholdSlider.value;
+});
+thresholdSlider.addEventListener('change', async () => {
+  if (!thresholdEditMode) return;
+  queuedThreshold = `${thresholdEditMode}:${thresholdSlider.value}`;
+  thresholdEditMode = null;
+  if (savingThreshold) return;
+  savingThreshold = true;
+  try {
+    while (queuedThreshold !== null) {
+      const value = queuedThreshold;
+      queuedThreshold = null;
+      await command('threshold', { value });
+    }
+  } finally {
+    savingThreshold = false;
+    render();
+  }
+});
+thresholdSlider.addEventListener('blur', () => { thresholdEditMode = null; });
 elements.sensitivity.addEventListener('input', renderSensitivity);
 elements.sensitivity.addEventListener('change', () => command('scale', { value: 165 - Number(elements.sensitivity.value) }));
 elements.hardware.addEventListener('change', async () => {
