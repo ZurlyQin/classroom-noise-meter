@@ -1,198 +1,194 @@
-Classroom Noise Meter
-English pseudocode for NoiseMeter.java and NoiseServer.java
-
-The browser sends the lowest and highest microphone readings from each sampling
-window. Java calculates a relative sound level from 0 to 100 and returns the
-LED count and alarm sequence number. The browser drives the LEDs and plays the
-selected alarm when the sequence number changes.
+CLASSROOM NOISE METER
 
 1. NoiseMeter.java
-==================
+------------------
 
-Initial settings
-    mode <- GROUP
-    defaultLimits <- {EXAM: 30, GROUP: 50, BREAK: 70}
-    customLimits <- empty map
-    ledThresholds <- [6, 23, 42, 62, 82]
-    fullScale <- 50
-    noiseFloor <- 3
-    smoothing <- array of 4 readings
-    recording <- array of 60 readings
-    sessionReadings <- 2D array with 12 rows and 60 columns
+ALGORITHM ProcessSoundFrame
+INPUT  lowest and highest microphone readings, switch position, current time
+OUTPUT current sound level, number of LEDs to light, alarm sequence number
 
-FUNCTION frame(low, high, switchPosition, alarmGuardMs, nowMs)
-    IF low < 0 OR high > 1023 OR low > high OR switchPosition outside -1..3
-        RAISE invalid input ("Invalid sensor frame")
+BEGIN
+    IF low < 0 OR high > 1023 OR low > high OR switchPosition outside -1..3 THEN
+        RETURN error 400, "Invalid sensor frame"
+    ENDIF
 
-    Save nowMs as the latest frame time and remember switchPosition
-    IF a recording is active AND 60 seconds have elapsed
-        CALL finish() before processing this frame
-    IF idle AND switchPosition is 0, 1, or 2
-        Select GROUP, EXAM, or BREAK respectively
-        IF the mode changed, CALL resetWarning()
+    IF recording AND 60 seconds have elapsed THEN
+        CALL FinishSession()
+    ENDIF
+    IF NOT recording AND the physical switch selects a mode THEN
+        Apply the selected mode and reset the warning timer if the mode changed
+    ENDIF
 
-    IF nowMs >= ignoreAlarmUntil
-        span <- high - low
-        IF source = demo
-            jitter <- random integer from -3 through +3   // nextInt(7) - 3
-            span <- CLAMP(span + jitter, 0, 1023)
-        rawLevel <- ROUND((span - noiseFloor) * 100 / (fullScale - noiseFloor))
-        level <- movingAverage(CLAMP(rawLevel, 0, 100))
-        CALL updateWarning(nowMs, alarmGuardMs)
+    IF currentTime >= ignoreSoundUntil THEN
+        span ← high - low
+        IF source = DEMO THEN
+            span ← CLAMP(span + RANDOM_INTEGER(-3, 3), 0, 1023)
+        ENDIF
+        reading ← ROUND((span - 3) * 100 / (fullScale - 3))
+        level ← MovingAverage(CLAMP(reading, 0, 100))
+        CALL CheckWarning(level, currentTime)
+    ENDIF
 
-    IF a recording is active
-        second <- FLOOR((nowMs - recordingStartMs) / 1000)
-        recording[second] <- MAX(recording[second], level)
-END FUNCTION
+    IF recording THEN
+        second ← FLOOR((currentTime - startTime) / 1000)
+        readings[second] ← MAX(readings[second], level)
+    ENDIF
 
-FUNCTION movingAverage(reading)
-    IF the window is full, subtract its oldest reading from the running sum
-    ELSE increase the number of readings in the window
-    Write reading at the current index and add it to the running sum
-    Advance the index, wrapping to 0 after the last cell
-    RETURN ROUND(running sum / number of readings in the window)
-END FUNCTION
+    lights ← 0
+    FOR EACH threshold IN [6, 23, 42, 62, 82]
+        IF level >= threshold THEN
+            lights ← lights + 1
+        ENDIF
+    ENDFOR
+    RETURN level, lights, alarmSequence
+END
 
-FUNCTION ledCount()
-    count <- 0
-    FOR EACH threshold IN ledThresholds
-        IF level >= threshold, increment count
-    RETURN count
-END FUNCTION
+FUNCTION MovingAverage(reading)
+    IF the window contains 4 readings THEN
+        Remove the oldest reading
+    ENDIF
+    Add reading to the window
+    RETURN ROUND(SUM(window) / SIZE(window))
+ENDFUNCTION
 
-FUNCTION resetWarning()
-    loudSince <- UNSET
-    warningLatched <- FALSE
-END FUNCTION
+PROCEDURE CheckWarning(level, currentTime)
+    IF level <= limit[currentMode] THEN
+        loudSince ← NONE
+        warningSent ← FALSE
+    ELSE
+        IF loudSince = NONE THEN
+            loudSince ← currentTime
+        ENDIF
+        IF currentTime - loudSince >= 5000 AND warningSent = FALSE THEN
+            alarmSequence ← alarmSequence + 1
+            warningSent ← TRUE
+            IF recording THEN
+                warnings ← warnings + 1
+            ENDIF
+            IF source = BOARD THEN
+                ignoreSoundUntil ← currentTime + alarmGuardMs
+            ENDIF
+        ENDIF
+    ENDIF
+ENDPROCEDURE
 
-FUNCTION updateWarning(nowMs, alarmGuardMs)
-    limit <- customLimits[mode] if present, otherwise defaultLimits[mode]
-    IF level <= limit
-        CALL resetWarning()
-        RETURN
-    IF loudSince is UNSET, loudSince <- nowMs
-    IF nowMs - loudSince >= 5000 AND warningLatched = FALSE
-        warningLatched <- TRUE
-        Increment the alarm sequence number
-        IF recording, increment this session's warning count
-        IF source = board, ignoreAlarmUntil <- nowMs + alarmGuardMs
-END FUNCTION
+The browser plays the selected alarm when alarmSequence changes. Times are in
+milliseconds. The initial fullScale is 50. The default limits are 30 for Exam,
+50 for Group Work, and 70 for Break.
 
-FUNCTION apply(command, client, arguments, nowMs)
-    Process one command at a time
-    IF an input is attached
-        Measure the gap since the last frame, or since attachment before the first frame
-        IF gap > 4000 ms, release the input and discard any unfinished recording
-        ELSE IF a previous frame exists AND gap > 850 ms
-            Discard any unfinished recording and reset the signal
+PROCEDURE SetThreshold(requestedMode, newLimit)
+    IF another tab controls the input OR recording THEN
+        RETURN error 409
+    ENDIF
+    IF requestedMode differs from currentMode THEN
+        RETURN error 409
+    ENDIF
+    IF newLimit is not an integer from 0 to 100 THEN
+        RETURN error 400
+    ENDIF
+    IF newLimit differs from limit[currentMode] THEN
+        limit[currentMode] ← newLimit
+        loudSince ← NONE
+        warningSent ← FALSE
+    ENDIF
+ENDPROCEDURE
 
-    SWITCH command
-        attach      Accept board or demo. Reject a second owner. Register this
-                    tab as owner, save the input source and reset the signal.
-        detach      If this tab owns the input, release it and discard any
-                    unfinished recording.
-        frame       Require the owner. Check the alarm guard duration, then call frame().
-        mode        Require an idle meter and control of settings. Reject a browser
-                    mode change while the physical switch controls the mode.
-                    Select the requested mode and reset the warning if it changed.
-        threshold   Require an idle meter and control of settings. Read MODE:LIMIT.
-                    Reject malformed input or a limit outside 0..100 as invalid.
-                    Reject a valid mode that differs from the current mode as a conflict.
-                    If the limit changed, save it for this mode and call resetWarning().
-        scale       Require an idle meter and control of settings. Reject a value
-                    outside 15..150. If it changed, save it and reset the signal.
-        start       Require the owner, an idle meter and a recent reading.
-                    Fill recording with -1, save start time and sensitivity,
-                    clear session warnings and call resetWarning().
-        cancel      Require the owner and discard the unfinished recording.
-        test-buzzer Require the owner, an idle meter and a live board reading.
-                    Set ignoreAlarmUntil to nowMs plus the validated guard
-                    duration and call resetWarning().
-        state       Read the current state.
-        otherwise   RAISE invalid input ("Unknown command")
+PROCEDURE StartSession()
+    IF caller does not own the input OR recording OR no recent reading exists THEN
+        RETURN error 409
+    ENDIF
+    FOR i ← 0 TO 59
+        readings[i] ← -1
+    ENDFOR
+    startTime ← currentTime
+    warnings ← 0
+    loudSince ← NONE
+    warningSent ← FALSE
+    recording ← TRUE
+ENDPROCEDURE
 
-    RETURN state as JSON, including level, ledCount(), effective limits,
-           warning timing, alarm sequence, recording progress and history
-END FUNCTION
+PROCEDURE FinishSession()
+    recording ← FALSE
+    total ← 0
+    FOR i ← 0 TO 59
+        IF readings[i] = -1 THEN
+            RETURN "Session discarded: missing sensor data"
+        ENDIF
+        total ← total + readings[i]
+    ENDFOR
 
-An idle meter has no active recording. Settings are available when the input
-has no owner or the caller is its owner. A recent reading is at most 850 ms old.
-The alarm guard defaults to 2100 ms and accepts values from 2100 to 3500 ms.
+    average ← total / 60
+    top ← FindLoudest(readings)
+    peak ← readings[top[0]]
+    Shift previous sessions down one row in history[12][60], oldest last
+    Copy readings into history[0] and save the matching session summary
+    OUTPUT average, peak, warnings
+    FOR EACH index IN top
+        OUTPUT "Second", index + 1, "Level", readings[index]
+    ENDFOR
+ENDPROCEDURE
 
-FUNCTION finish()
-    IF any cell of recording is -1
-        Discard the session, report missing data and RETURN
-    average <- SUM(recording) / 60
-    top <- findLoudest(recording)
-    peak <- recording[top[0]]
-    Shift older rows and summaries down one position, keeping at most 12 sessions
-    Copy recording into sessionReadings[0]
-    Save the session ID, start time, mode, source, scale, threshold, warning
-    count, average, peak and top three indexes in the newest summary
-    End recording and print the report using printf
-    Display each selected second as its zero-based index plus one
-END FUNCTION
-
-STATIC FUNCTION findLoudest(readings)
-    selected <- array of FALSE values, one for each reading
-    result <- array of 3 indexes
-    FOR rank FROM 0 THROUGH 2
-        best <- UNSET
-        FOR i FROM 0 THROUGH LENGTH(readings) - 1
-            IF selected[i] = FALSE AND (best is UNSET OR readings[i] > readings[best])
-                best <- i
-        result[rank] <- best
-        selected[best] <- TRUE
-    RETURN result
-END FUNCTION
-
-Each stored second contains its highest smoothed level. Scanning from the first
-second and using a strict greater-than comparison ranks earlier ties first.
+FUNCTION FindLoudest(readings)
+    selected ← array of 60 FALSE values
+    FOR rank ← 0 TO 2
+        best ← NONE
+        FOR i ← 0 TO 59
+            IF NOT selected[i] THEN
+                IF best = NONE OR readings[i] > readings[best] THEN
+                    best ← i
+                ENDIF
+            ENDIF
+        ENDFOR
+        top[rank] ← best
+        selected[best] ← TRUE
+    ENDFOR
+    RETURN top
+ENDFUNCTION
 
 2. NoiseServer.java
-===================
+-------------------
 
-PROCEDURE main(arguments)
-    port <- first command-line argument as an integer, or 8765 if omitted
-    Create one shared NoiseMeter instance
-    Bind the HTTP server to 127.0.0.1 on port
-    Register handle() for incoming requests and start the server
-    Print the local URL in the terminal
-END PROCEDURE
+ALGORITHM RunLocalServer
+BEGIN
+    port ← supplied port, or 8765 if omitted
+    Create one shared noise meter
+    Start the HTTP server on 127.0.0.1 at port
+    OUTPUT the local URL
+    WHILE the server is running
+        Accept a request and dispatch it to HandleRequest
+    ENDWHILE
+END
 
-FUNCTION handle(request)
-    IF Host does not match localhost or 127.0.0.1 with the configured port
+FUNCTION HandleRequest(request)
+    IF host or port does not match the local server THEN
         RETURN HTTP 403
-    IF request is GET /api/state
-        RETURN handleApi(request, stateRequest = TRUE)
-    IF request is POST /api/command
-        IF Origin differs from the local page origin, RETURN HTTP 403
-        RETURN handleApi(request, stateRequest = FALSE)
-    IF request is GET for /, /index.html, /style.css or /app.js
-        Read the matching web resource from the JAR
-        IF the resource is missing, RETURN HTTP 500
-        RETURN HTTP 200 with its content type and bytes
-    RETURN HTTP 404
-END FUNCTION
+    ENDIF
 
-FUNCTION handleApi(request, stateRequest)
-    TRY
-        Reject a raw query longer than 512 characters
-        Decode query fields. Require a client ID of 8 to 48 characters
-        containing only lowercase letters, digits or hyphens.
-        action <- "state" for a state request, otherwise the requested action
-        IF action = "frame", parse low, high and selector as integers
-        nowMs <- milliseconds since server startup, using a monotonic clock
-        result <- meter.apply(action, client, value, low, high, selector, nowMs)
-        RETURN HTTP 200 with result as JSON
-    ON invalid input
+    IF request is GET /api/state THEN
+        action ← "state"
+    ELSE IF request is POST /api/command THEN
+        IF origin does not match the local page THEN
+            RETURN HTTP 403
+        ENDIF
+        action ← requested command
+    ELSE IF request is GET for the home page, stylesheet, or JavaScript file THEN
+        IF the file is missing from the JAR THEN
+            RETURN HTTP 500
+        ENDIF
+        RETURN HTTP 200 with the file
+    ELSE
+        RETURN HTTP 404
+    ENDIF
+
+    IF query exceeds 512 characters OR tab ID is invalid THEN
+        RETURN HTTP 400
+    ENDIF
+    Pass action, tab ID, arguments and elapsed time to the meter
+    IF an argument is invalid THEN
         RETURN HTTP 400 with the reason
-    ON state conflict
+    ELSE IF the action conflicts with the meter's state THEN
         RETURN HTTP 409 with the reason
-END FUNCTION
-
-Example input checks
-    With GROUP selected and the meter idle, GROUP:101 returns HTTP 400.
-    The previous threshold remains in effect.
-    During an active recording, a threshold change returns HTTP 409.
-    The recording continues with the threshold it started with.
+    ELSE
+        RETURN HTTP 200 with the meter state as JSON
+    ENDIF
+ENDFUNCTION
