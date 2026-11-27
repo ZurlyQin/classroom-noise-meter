@@ -1,6 +1,7 @@
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.Random;
 
 /** Hardware-independent Java model. Time is monotonic milliseconds supplied by the server. */
 final class NoiseMeter {
@@ -41,6 +42,7 @@ final class NoiseMeter {
     private int level;
     private int adcSpan;
     private int fullScale = 50;
+    private final Random demoRandom = new Random();
     private final EnumMap<Mode, Integer> customLimits = new EnumMap<>(Mode.class);
     private Mode mode = Mode.GROUP;
     private String owner;
@@ -240,6 +242,10 @@ final class NoiseMeter {
         // Avoid feeding the board's own warning sound into its detector.
         if (now >= ignoreAlarmUntil) {
             adcSpan = high - low;
+            if (source.equals("demo")) {
+                int jitter = demoRandom.nextInt(7) - 3;
+                adcSpan = Math.max(0, Math.min(1023, adcSpan + jitter));
+            }
             int normalized = Math.max(0, Math.min(100,
                     Math.round((adcSpan - NOISE_FLOOR) * 100f / (fullScale - NOISE_FLOOR))));
             level = movingAverage(normalized);
