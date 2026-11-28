@@ -137,7 +137,13 @@ final class NoiseMeter {
 
     private void attach(String client, String kind, long now) {
         if (!kind.equals("board") && !kind.equals("demo")) throw new IllegalArgumentException("Unknown input.");
-        if (owner != null) throw new IllegalStateException("Another tab already has an active input.");
+        if (owner != null) {
+            requireOwner(client);
+            if (source.equals(kind)) {
+                throw new IllegalStateException("This tab already has an active input.");
+            }
+            if (recordingSince >= 0) throw new IllegalStateException("Finish or cancel the recording before switching input.");
+        }
         owner = client;
         source = kind;
         selector = -1;

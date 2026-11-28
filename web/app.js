@@ -23,7 +23,7 @@ const debugLeds = new Map(Array.from(elements['debug-leds'].children, element =>
 let state = null;
 let input = null;
 let busy = false;
-let reading = false;
+let refreshTask = null;
 let localMessage = '';
 let latestRequest = 0;
 let latestAccepted = 0;
@@ -238,6 +238,14 @@ class FirmataDevice {
     }
   }
 
+  async resetForInputSwitch() {
+    this.buzzerGeneration++;
+    await this.buzzerQueue;
+    await this.write([0xf5, BUZZER_PIN, 0]);
+    await this.driveLeds(0);
+    this.frame();
+  }
+
   stopOutputs() {
     this.buzzerGeneration++;
     if (!this.initialized || !this.writer) return Promise.resolve();
@@ -287,7 +295,7 @@ function showMessage(text, error = false) {
 
 async function startInput(kind) {
   if (busy) return;
-  if (input) {
+  if (input?.kind === kind) {
     await stopInput();
     return;
   }
@@ -296,18 +304,33 @@ async function startInput(kind) {
     return;
   }
   busy = true;
+  const previous = input;
   showMessage('');
   showBuzzerStatus('');
   if (!BUZZER_PATTERNS[elements['alarm-sound'].value]) void enableSpeaker().catch(() => {});
   let device;
   try {
-    if (kind === 'board') {
+    if (previous) {
+      if (state?.active) throw new Error('Finish or cancel the recording before switching input.');
+      await refreshTask;
+      if (input !== previous) return;
+    }
+    if (kind === 'board' && !previous?.device) {
       device = new FirmataDevice(await navigator.serial.requestPort());
       await device.open();
     }
     const initial = await request('attach', { value: kind });
-    input = { kind, device, alert: initial.alert, started: performance.now() };
-    elements.hardware.checked = false;
+    if (previous && previous !== input) return;
+    input = { kind, device: device ?? previous?.device, alert: initial.alert, started: performance.now() };
+    elements.hardware.checked = kind === 'board' && Boolean(input.device?.selectorEnabled);
+    if (previous?.device) {
+      cancelAlarm(previous);
+      try {
+        await previous.device.resetForInputSwitch();
+      } catch (error) {
+        await stopInput(error.message);
+      }
+    }
   } catch (error) {
     if (device) await device.close();
     if (error.name !== 'NotFoundError') showMessage(error.message, true);
@@ -455,7 +478,8 @@ function syncDebug() {
     }
   }
   if (debugEnabled) {
-    elements['debug-source'].textContent = device ? 'Arduino pin readback · microphone scans every second'
+    elements['debug-source'].textContent = device && input.kind === 'demo' ? 'Demo levels drive D2–D6. A0 shows live microphone readings.'
+      : device ? 'Arduino pin readback · microphone scans every second'
       : input?.kind === 'demo' ? 'Demo input is simulated. Connect an Arduino for pin readback.'
         : 'Connect the Arduino to read its pins.';
   }
@@ -543,14 +567,15 @@ function alarmGuard() {
 async function soundWarning(current, test = false) {
   const sound = elements['alarm-sound'].value;
   const pattern = BUZZER_PATTERNS[sound];
-  if (alarmJob || (pattern && !current?.device)) return;
+  const liveBoard = current?.kind === 'board' && current.device;
+  if (alarmJob || (pattern && !liveBoard)) return;
   const job = { current, nodes: [] };
   alarmJob = job;
   showBuzzerStatus(test ? (pattern ? 'Testing D8…' : 'Playing test sound…') : 'Sounding the alarm…');
   render();
   try {
     if (test && !pattern) await enableSpeaker();
-    if (test && current?.device) await request('test-buzzer', { value: alarmGuard() });
+    if (test && liveBoard) await request('test-buzzer', { value: alarmGuard() });
     if (alarmJob !== job) return;
     if (current?.device?.debugMic) current.device.debugMic.alarm = true;
     if (pattern) {
@@ -563,7 +588,7 @@ async function soundWarning(current, test = false) {
         await playSpeaker(job, sound);
         if (alarmJob === job) showBuzzerStatus(test ? 'Test sound played.' : 'Speaker alarm played.');
       } catch (error) {
-        if (test || !current?.device || alarmJob !== job) throw error;
+        if (test || !liveBoard || alarmJob !== job) throw error;
         showBuzzerStatus(`${error.message} Using the D8 buzzer for this alarm.`, true);
         await current.device.pulseBuzzer(BUZZER_PATTERNS.double);
       }
@@ -627,7 +652,8 @@ function renderAlarmControls() {
   const sound = elements['alarm-sound'].value;
   const d8 = Boolean(BUZZER_PATTERNS[sound]);
   const playbackBusy = Boolean(alarmJob) || importingSound;
-  elements['alarm-route'].textContent = d8 ? 'Plays on the Arduino D8 buzzer.' : 'Plays through the computer speakers.';
+  elements['alarm-route'].textContent = !d8 ? 'Plays through the computer speakers.'
+    : input?.kind === 'demo' ? 'D8 stays quiet in demo mode.' : 'Plays on the Arduino D8 buzzer.';
   elements['alarm-file-area'].hidden = sound !== 'custom';
   elements['alarm-sound'].disabled = playbackBusy;
   elements['alarm-file'].disabled = playbackBusy;
@@ -645,16 +671,22 @@ function demoFrame(current) {
   return { low: 27, high: 27 + span, selector: -1 };
 }
 
-async function refresh() {
-  if (reading || busy) return;
-  reading = true;
+function refresh() {
+  if (!refreshTask && !busy) {
+    refreshTask = refreshInput().finally(() => { refreshTask = null; });
+  }
+  return refreshTask;
+}
+
+async function refreshInput() {
   const current = input;
   try {
     if (!current) {
       await request('state');
       return;
     }
-    const frame = current.device?.frame() ?? (current.kind === 'demo' ? demoFrame(current) : null);
+    const micFrame = current.device?.frame();
+    const frame = current.kind === 'demo' ? demoFrame(current) : micFrame;
     const next = frame ? await request('frame', { ...frame, value: alarmGuard() }) : await request('state');
     if (input !== current) return;
     if (!next.owner) {
@@ -669,8 +701,6 @@ async function refresh() {
   } catch (error) {
     if (current && input === current) await stopInput(error.message);
     else if (!state) showMessage('The local Java server is unavailable. Start it and reload this page.', true);
-  } finally {
-    reading = false;
   }
 }
 
@@ -688,20 +718,22 @@ function render() {
   announceStatus(localMessage || state?.notice || '');
   renderAlarmControls();
   syncDebug();
-  elements.connect.disabled = busy || input?.kind === 'demo' || Boolean(state?.source !== 'none' && state && !input && !state.owner);
-  elements.demo.disabled = busy || input?.kind === 'board' || Boolean(state?.source !== 'none' && state && !input && !state.owner);
-  elements.connect.textContent = input?.kind === 'board' ? 'Disconnect Arduino' : 'Connect Arduino';
+  elements.connect.disabled = busy || (input?.kind === 'demo' && !input.device) || Boolean(state?.source !== 'none' && state && !input && !state.owner);
+  elements.demo.disabled = busy || Boolean(state?.source !== 'none' && state && !input && !state.owner);
+  elements.connect.textContent = input?.device ? 'Disconnect Arduino' : 'Connect Arduino';
   elements.demo.textContent = input?.kind === 'demo' ? 'End demo' : 'Try demo';
   if (!state) return;
   const live = state.ready;
   const unavailable = state.source !== 'none' && !state.owner;
-  elements['connection-state'].textContent = input?.kind === 'board' ? 'Arduino connected'
+  elements['connection-state'].textContent = input?.kind === 'demo' && input.device ? 'Demo · Arduino LEDs'
+    : input?.kind === 'board' ? 'Arduino connected'
     : input?.kind === 'demo' ? 'Demo input' : unavailable ? 'In use in another tab' : 'Disconnected';
   elements['connection-state'].dataset.live = String(live && Boolean(input));
   elements['live-status'].textContent = live ? (state.source === 'demo' ? 'Simulated input' : 'Live A0 input')
     : state.source === 'none' ? 'Waiting for input' : 'Waiting for readings';
   elements['live-status'].dataset.live = String(live);
   elements.level.textContent = live ? state.level : '–';
+  elements['span-label'].textContent = state.source === 'demo' ? 'Simulated span' : 'A0 span';
   elements.adc.querySelector('strong').textContent = live ? `${state.adcSpan} ADC` : '–';
   segments.forEach((segment, index) => segment.classList.toggle('lit', live && index < state.leds));
   elements['led-bar'].setAttribute('aria-label', `${live ? state.leds : 0} of 5 LEDs lit`);
@@ -868,8 +900,8 @@ function drawChart() {
   }
 }
 
-elements.connect.addEventListener('click', () => startInput('board'));
-elements.demo.addEventListener('click', () => startInput('demo'));
+elements.connect.addEventListener('click', () => input?.device ? stopInput() : startInput('board'));
+elements.demo.addEventListener('click', () => startInput(input?.kind === 'demo' && input.device ? 'board' : 'demo'));
 elements['debug-toggle'].addEventListener('click', toggleDebug);
 elements['session-action'].addEventListener('click', () => command(state.active ? 'cancel' : 'start'));
 modeButtons.forEach(button => button.addEventListener('click', () => command('mode', { value: button.dataset.mode })));

@@ -18,7 +18,7 @@ The Arduino Uno samples a sound sensor, and Java calculates a relative sound lev
    java -jar ClassroomNoiseMeter.jar
    ```
 
-5. Open [http://localhost:8765/](http://localhost:8765/) in Chrome or Edge. Click **Connect Arduino** and choose the board’s USB serial port. **Live A0 input** confirms the connection. With no board, click **Try demo**. Reports made with simulated input are marked **Demo**.
+5. Open [http://localhost:8765/](http://localhost:8765/) in Chrome or Edge. Click **Connect Arduino** and choose the board’s USB serial port. **Live A0 input** confirms the connection. Click **Try demo** while connected to drive the five Uno LEDs (D2–D6) with simulated sound levels. **End demo** switches back to the microphone on the same USB connection. The D8 buzzer stays quiet during the demo. You can also try the demo without a board. Reports made with simulated input are marked **Demo**.
 
 ## Flash StandardFirmata
 
