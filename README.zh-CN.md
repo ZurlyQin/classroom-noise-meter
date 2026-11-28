@@ -15,7 +15,7 @@ Arduino Uno 读取声音传感器，Java 计算相对音量并控制五颗 LED�
    java -jar ClassroomNoiseMeter.jar
    ```
 
-5. 用 Chrome 或 Edge 打开 [http://localhost:8765/](http://localhost:8765/)，点 **Connect Arduino**，选择板子的 USB 串口。看到 **Live A0 input** 后即可使用。保持连接，点 **Try demo**，Uno 上的五颗 LED（D2–D6）就会随模拟音量亮灭。点 **End demo** 会切回麦克风，沿用同一个 USB 连接。演示期间 D8 蜂鸣器保持安静。没有板子时也可以单独运行网页演示。模拟会话会标注 **Demo**。
+5. 用 Chrome 或 Edge 打开 [http://localhost:8765/](http://localhost:8765/)，点 **Connect Arduino**，选择板子的 USB 串口。看到 **Live A0 input** 后即可使用。保持连接，点 **Try demo**，Uno 上的五颗 LED（D2–D6）就会随模拟音量亮灭。点 **End demo** 会切回麦克风，沿用同一个 USB 连接。选择 Arduino 蜂鸣器节奏后，模拟音量连续 5 秒高于阈值，D8 就会按所选节奏报警。没有板子时也可以单独运行网页演示。模拟会话会标注 **Demo**。
 
 ## 烧录 StandardFirmata
 

@@ -567,19 +567,20 @@ function alarmGuard() {
 async function soundWarning(current, test = false) {
   const sound = elements['alarm-sound'].value;
   const pattern = BUZZER_PATTERNS[sound];
-  const liveBoard = current?.kind === 'board' && current.device;
-  if (alarmJob || (pattern && !liveBoard)) return;
+  const device = current?.device;
+  if (alarmJob || (pattern && !device)) return;
   const job = { current, nodes: [] };
   alarmJob = job;
   showBuzzerStatus(test ? (pattern ? 'Testing D8…' : 'Playing test sound…') : 'Sounding the alarm…');
   render();
   try {
     if (test && !pattern) await enableSpeaker();
-    if (test && liveBoard) await request('test-buzzer', { value: alarmGuard() });
+    // Only real microphone input needs a guard against the test sound.
+    if (test && current?.kind === 'board') await request('test-buzzer', { value: alarmGuard() });
     if (alarmJob !== job) return;
     if (current?.device?.debugMic) current.device.debugMic.alarm = true;
     if (pattern) {
-      if (await current.device.pulseBuzzer(pattern) && alarmJob === job) {
+      if (await device.pulseBuzzer(pattern) && alarmJob === job) {
         const count = pattern.pulses.length;
         showBuzzerStatus(`D8 confirmed ${count} ${count === 1 ? 'pulse' : 'pulses'}.`);
       }
@@ -588,9 +589,9 @@ async function soundWarning(current, test = false) {
         await playSpeaker(job, sound);
         if (alarmJob === job) showBuzzerStatus(test ? 'Test sound played.' : 'Speaker alarm played.');
       } catch (error) {
-        if (test || !liveBoard || alarmJob !== job) throw error;
+        if (test || !device || alarmJob !== job) throw error;
         showBuzzerStatus(`${error.message} Using the D8 buzzer for this alarm.`, true);
-        await current.device.pulseBuzzer(BUZZER_PATTERNS.double);
+        await device.pulseBuzzer(BUZZER_PATTERNS.double);
       }
     }
   } catch (error) {
@@ -653,14 +654,14 @@ function renderAlarmControls() {
   const d8 = Boolean(BUZZER_PATTERNS[sound]);
   const playbackBusy = Boolean(alarmJob) || importingSound;
   elements['alarm-route'].textContent = !d8 ? 'Plays through the computer speakers.'
-    : input?.kind === 'demo' ? 'D8 stays quiet in demo mode.' : 'Plays on the Arduino D8 buzzer.';
+    : input?.kind === 'demo' && !input.device ? 'Choose a computer sound to hear this demo without an Arduino.' : 'Plays on the Arduino D8 buzzer.';
   elements['alarm-file-area'].hidden = sound !== 'custom';
   elements['alarm-sound'].disabled = playbackBusy;
   elements['alarm-file'].disabled = playbackBusy;
   const test = elements['test-buzzer'];
   test.textContent = d8 ? 'Test buzzer' : 'Test sound';
   test.disabled = busy || playbackBusy || Boolean(state?.active) ||
-    (d8 && (!state?.ready || input?.kind !== 'board')) || (sound === 'custom' && !customSound);
+    (d8 && (!state?.ready || !input?.device)) || (sound === 'custom' && !customSound);
 }
 
 function demoFrame(current) {
